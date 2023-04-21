@@ -179,12 +179,12 @@ def unique_requires(transitive_reqs):
 
 class BuildInfo:
 
-    def __init__(self, graph, name, number, repositories=None, url=None, user=None, password=None, apikey=None):
-        self._graph = graph
+    def __init__(self, graph, name, number, repository=None, url=None, user=None, password=None, apikey=None):
+        self._graph = graph        
         self._name = name
-        self._number = number
-        self._repositories = repositories
-        self._url = url
+        self._number = number       
+        self._repository = repository
+        self._url = url        
         self._user = user
         self._password = password
         self._apikey = apikey
@@ -222,7 +222,7 @@ class BuildInfo:
                                          "sha1": sha1,
                                          "md5": md5}
                         if not is_dependency:
-                            artifact_info.update({"name": file_name, "path": f'{remote_path}/{file_name}'})
+                            artifact_info.update({"name": file_name, "path": f'{self._repository}/{remote_path}/{file_name}'})
                         else:
                             ref = node.get("ref")
                             pkg = f":{node.get('package_id')}#{node.get('prev')}" if artifact_type == "package" else ""
@@ -232,47 +232,40 @@ class BuildInfo:
             return local_artifacts
 
         def _get_remote_artifacts():
-            assert self._url and self._repositories, "Missing information in the Conan local cache, " \
-                                                     "please provide the --url and --repository arguments " \
-                                                     "to retrieve the information from Artifactory."
+            assert self._url and self._repository, "Missing information in the Conan local cache, " \
+                                                   "please provide the --url and --repository arguments " \
+                                                   "to retrieve the information from Artifactory."
 
             remote_artifacts = []
 
-            for repository in self._repositories:
-                # change from the conan API to the correct API to get files info and ignore if
-                # this can lead to problems, probably is better to pass manually a list of URLs
-                for artifact in artifacts_names:
-                    request_url = f"{self._url}/api/storage/{repository}/{remote_path}/{artifact}"
-                    if not self._cached_artifact_info.get(request_url):
-                        checksums = None
-                        try:
-                            response = api_request("get", request_url, self._user, self._password, self._apikey)
-                            response_data = json.loads(response)
-                            checksums = response_data.get("checksums")
-                            self._cached_artifact_info[request_url] = checksums
-                        except Exception:
-                            pass
+            for artifact in artifacts_names:
+                request_url = f"{self._url}/api/storage/{self._repository}/{remote_path}/{artifact}"
+                if not self._cached_artifact_info.get(request_url):
+                    checksums = None
+                    try:
+                        response = api_request("get", request_url, self._user, self._password, self._apikey)
+                        response_data = json.loads(response)
+                        checksums = response_data.get("checksums")
+                        self._cached_artifact_info[request_url] = checksums
+                    except Exception:
+                        pass
+                else:
+                    checksums = self._cached_artifact_info.get(request_url)
+
+                if checksums:
+                    artifact_info = {"type": os.path.splitext(artifact)[1].lstrip('.'),
+                                     "sha256": checksums.get("sha256"),
+                                     "sha1": checksums.get("sha1"),
+                                     "md5": checksums.get("md5")}
+
+                    if not is_dependency:
+                        artifact_info.update({"name": artifact, "path": f'{self._repository}/{remote_path}/{artifact}'})
                     else:
-                        checksums = self._cached_artifact_info.get(request_url)
+                        ref = node.get("ref")
+                        pkg = f":{node.get('package_id')}#{node.get('prev')}" if artifact_type == "package" else ""
+                        artifact_info.update({"id": f"{ref}{pkg}::{artifact}"})
 
-                    if checksums:
-                        artifact_info = {"type": os.path.splitext(artifact)[1].lstrip('.'),
-                                         "sha256": checksums.get("sha256"),
-                                         "sha1": checksums.get("sha1"),
-                                         "md5": checksums.get("md5")}
-
-                        if not is_dependency:
-                            artifact_info.update({"name": artifact, "path": f'{remote_path}/{artifact}'})
-                        else:
-                            ref = node.get("ref")
-                            pkg = f":{node.get('package_id')}#{node.get('prev')}" if artifact_type == "package" else ""
-                            artifact_info.update({"id": f"{ref}{pkg}::{artifact}"})
-
-                        remote_artifacts.append(artifact_info)
-                    else:
-                        break
-                if remote_artifacts:
-                    break
+                    remote_artifacts.append(artifact_info)
 
             return remote_artifacts
 
@@ -387,10 +380,9 @@ def build_info_create(conan_api: ConanAPI, parser, subparser, *args):
                                          "This may be not necessary if all the information for the Conan "
                                          "artifacts is present in the local cache.")
 
-    subparser.add_argument("--repository", help="Repositories to look artifacts for."
+    subparser.add_argument("--repository", help="Repository to look artifacts for."
                                                 "This may be not necessary if all the information for the Conan "
-                                                "artifacts is present in the local cache."
-                           , action="append")
+                                                "artifacts is present in the local cache.")
 
     subparser.add_argument("--user", help="user name for the repository")
     subparser.add_argument("--password", help="password for the user name")
