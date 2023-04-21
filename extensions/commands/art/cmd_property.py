@@ -215,6 +215,6 @@ def property_build_info_add(conan_api: ConanAPI, parser, subparser, *args):
                 artifact_properties["build.number"] = build_number
         
 
-            request_url = f"{args.url}/api/metadata/{args.repository}/{artifact_path}"
+            request_url = f"{args.url}/api/metadata/{artifact_path}"
             api_request("patch", request_url, args.user, args.password,
                         args.apikey, json_data=json.dumps({"props": artifact_properties}))
