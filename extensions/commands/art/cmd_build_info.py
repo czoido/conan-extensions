@@ -41,26 +41,30 @@ def response_to_str(response):
         return response.content
 
 
-def api_request(method, request_url, user=None, password=None, apikey=None, json_data=None):
+def api_request(method, request_url, user=None, password=None, apikey=None, json_data=None, binary_data=None):
     headers = {}
     if json_data:
         headers.update({"Content-Type": "application/json"})
+    if binary_data:
+        headers.update({"Content-Type": "application/octet-stream"})
     if apikey:
         headers.update({"X-JFrog-Art-Api": apikey})
+
+    data = json_data or binary_data
 
     requests_method = getattr(requests, method)
     if user and password:
         response = requests_method(request_url, auth=(
-            user, password), data=json_data, headers=headers)
+            user, password), data=data, headers=headers)
     elif apikey:
         response = requests_method(
-            request_url, data=json_data, headers=headers)
+            request_url, data=data, headers=headers)
     else:
         response = requests_method(request_url)
 
     if response.status_code == 401:
         raise Exception(response_to_str(response))
-    elif response.status_code not in [200, 204]:
+    elif response.status_code not in [200, 201, 204]:
         raise Exception(response_to_str(response))
 
     return response_to_str(response)
@@ -179,7 +183,8 @@ def unique_requires(transitive_reqs):
 
 class BuildInfo:
 
-    def __init__(self, graph, name, number, repository=None, url=None, user=None, password=None, apikey=None):
+    def __init__(self, graph, name, number, output_file, dependencies=False, repository=None, 
+                 url=None, user=None, password=None, apikey=None, modules=None):
         self._graph = graph        
         self._name = name
         self._number = number       
@@ -188,7 +193,27 @@ class BuildInfo:
         self._user = user
         self._password = password
         self._apikey = apikey
+        self._output_file = output_file
+        self._dependencies = dependencies
+        # the manifest info is a dictionary with the structure:
+        # {"files": [{"path": "<path>", "checksum": "<sha-256>"}, {"path": "<path>", "checksum": "<sha-256>"}]}
+        # to connect this manifest with the build info we have to set the 'jfrog.bundle.manifest' property
+        # on the build info file
+        self._manifest_info = {"files": []}
         self._cached_artifact_info = {}
+        self._data = self.header()
+
+        if modules:
+            self._data.update({"modules": modules})
+        else:
+            self._data.update({"modules": self.get_modules()})
+
+    @property
+    def manifest_info(self):
+        return self._manifest_info
+
+    def add_file_to_manifest(self, path, checksum):
+        self._manifest_info["files"].append({"path": path, "checksum": checksum})
 
     def get_artifacts(self, node, artifact_type, is_dependency=False):
         """
@@ -221,14 +246,16 @@ class BuildInfo:
                                          "sha256": sha256,
                                          "sha1": sha1,
                                          "md5": md5}
+                        artifact_path = f'{self._repository}/{remote_path}/{file_name}'
                         if not is_dependency:
-                            artifact_info.update({"name": file_name, "path": f'{self._repository}/{remote_path}/{file_name}'})
+                            artifact_info.update({"name": file_name, "path": artifact_path})
                         else:
                             ref = node.get("ref")
                             pkg = f":{node.get('package_id')}#{node.get('prev')}" if artifact_type == "package" else ""
                             artifact_info.update({"id": f"{ref}{pkg}::{file_name}"})
 
                         local_artifacts.append(artifact_info)
+                        self.add_file_to_manifest(artifact_path, sha256)
             return local_artifacts
 
         def _get_remote_artifacts():
@@ -258,14 +285,16 @@ class BuildInfo:
                                      "sha1": checksums.get("sha1"),
                                      "md5": checksums.get("md5")}
 
+                    artifact_path = f'{self._repository}/{remote_path}/{artifact}'
                     if not is_dependency:
-                        artifact_info.update({"name": artifact, "path": f'{self._repository}/{remote_path}/{artifact}'})
+                        artifact_info.update({"name": artifact, "path": artifact_path})
                     else:
                         ref = node.get("ref")
                         pkg = f":{node.get('package_id')}#{node.get('prev')}" if artifact_type == "package" else ""
                         artifact_info.update({"id": f"{ref}{pkg}::{artifact}"})
 
                     remote_artifacts.append(artifact_info)
+                    self.add_file_to_manifest(artifact_path, checksums.get("sha256"))
 
             return remote_artifacts
 
@@ -281,8 +310,8 @@ class BuildInfo:
 
         if not artifacts:
             raise ConanException(f"There are no artifacts for the {node.get('ref')} {artifact_type}. "
-                                 "Probably the package was not uploaded before creating the Build Info."
-                                 "Please upload the package to the server and try again.")
+                                  "Probably the package was not uploaded before creating the Build Info."
+                                  "Please upload the package to the server and try again.")
 
         # complete the information for the artifacts:
         if is_dependency:
@@ -315,13 +344,14 @@ class BuildInfo:
                         "artifacts": self.get_artifacts(node, "recipe")
                     }
 
-                    all_dependencies = []
-                    for require_id in unique_reqs:
-                        deps_artifacts = self.get_artifacts(get_node_by_id(nodes, require_id), "recipe",
-                                                            is_dependency=True)
-                        all_dependencies.extend(deps_artifacts)
+                    if self._dependencies:
+                        all_dependencies = []
+                        for require_id in unique_reqs:
+                            deps_artifacts = self.get_artifacts(get_node_by_id(nodes, require_id), "recipe",
+                                                                is_dependency=True)
+                            all_dependencies.extend(deps_artifacts)
 
-                    module.update({"dependencies": all_dependencies})
+                        module.update({"dependencies": all_dependencies})
 
                     ret.append(module)
 
@@ -334,12 +364,13 @@ class BuildInfo:
                         }
                         # get the dependencies and its artifacts
                         all_dependencies = []
-                        for require_id in unique_reqs:
-                            deps_artifacts = self.get_artifacts(get_node_by_id(nodes, require_id), "package",
-                                                                is_dependency=True)
-                            all_dependencies.extend(deps_artifacts)
+                        if self._dependencies:
+                            for require_id in unique_reqs:
+                                deps_artifacts = self.get_artifacts(get_node_by_id(nodes, require_id), "package",
+                                                                    is_dependency=True)
+                                all_dependencies.extend(deps_artifacts)
 
-                        module.update({"dependencies": all_dependencies})
+                            module.update({"dependencies": all_dependencies})
 
                         ret.append(module)
 
@@ -353,10 +384,14 @@ class BuildInfo:
                 "started": get_formatted_time(),
                 "buildAgent": {"name": "conan", "version": f"{str(conan_version)}"}}
 
-    def create(self):
-        bi = self.header()
-        bi.update({"modules": self.get_modules()})
-        return json.dumps(bi, indent=4)
+    def save(self):
+        # save build info file
+        with open(f'{self._output_file}', 'w') as f:
+            json.dump(self._data, f, indent=4)
+
+        # save manifest file
+        with open(f'{os.path.splitext(self._output_file)[0]}_manifest.json', 'w') as f:
+            json.dump(self.manifest_info, f, indent=4)
 
 
 @conan_command(group="Custom commands")
@@ -375,6 +410,7 @@ def build_info_create(conan_api: ConanAPI, parser, subparser, *args):
     subparser.add_argument("json", help="Conan generated JSON output file.")
     subparser.add_argument("build_name", help="Build name property for BuildInfo.")
     subparser.add_argument("build_number", help="Build number property for BuildInfo.")
+    subparser.add_argument("output", help="Output file name")
 
     subparser.add_argument("--url", help="Artifactory url, like: https://<address>/artifactory. "
                                          "This may be not necessary if all the information for the Conan "
@@ -383,6 +419,9 @@ def build_info_create(conan_api: ConanAPI, parser, subparser, *args):
     subparser.add_argument("--repository", help="Repository to look artifacts for."
                                                 "This may be not necessary if all the information for the Conan "
                                                 "artifacts is present in the local cache.")
+
+    subparser.add_argument("--dependencies", help="Whether to add dependencies information or not. Default: false.",
+                           action='store_true', default=False)
 
     subparser.add_argument("--user", help="user name for the repository")
     subparser.add_argument("--password", help="password for the user name")
@@ -393,10 +432,10 @@ def build_info_create(conan_api: ConanAPI, parser, subparser, *args):
     with open(args.json, 'r') as f:
         data = json.load(f)
 
-    bi = BuildInfo(data, args.build_name, args.build_number, args.repository, args.url, args.user, args.password,
-                   args.apikey)
-
-    cli_out_write(bi.create())
+    bi = BuildInfo(data, args.build_name, args.build_number, args.output, dependencies=args.dependencies,
+                   repository=args.repository, url=args.url, user=args.user, password=args.password,
+                   apikey=args.apikey)
+    bi.save()
 
 
 @conan_subcommand()
@@ -411,15 +450,39 @@ def build_info_upload(conan_api: ConanAPI, parser, subparser, *args):
     subparser.add_argument("--user", help="user name for the repository")
     subparser.add_argument("--password", help="password for the user name")
     subparser.add_argument("--apikey", help="apikey for the repository")
+
+    subparser.add_argument("--manifest-repository", help="repository to upload the manifest file to. " \
+                                                         "If the repository is not set as argument, " \
+                                                         "the manifest file will not be uploaded.")
+
     args = parser.parse_args(*args)
+    manifest_file = os.path.splitext(args.build_info)[0] + "_manifest.json"
 
     with open(args.build_info) as f:
         build_info_json = json.load(f)
+
+    if args.manifest_repository:
+        # add jfrog.bundle.manifest property to BuildInfo
+        build_info_json.update({"properties":{
+                "jfrog.bundle.manifest": f"{args.manifest_repository}/{manifest_file}"
+            }})
 
     request_url = f"{args.url}/api/build"
     response = api_request("put", request_url, args.user, args.password,
                            args.apikey, json_data=json.dumps(build_info_json))
     cli_out_write(response)
+
+    if args.manifest_repository:
+        request_url = f"{args.url}/{args.manifest_repository}/{manifest_file}"
+        print(request_url)
+        with open(manifest_file, 'rb') as f:
+            file_contents = f.read()
+
+        #print(file_contents)
+        response = api_request("put", request_url, args.user, args.password,
+                               args.apikey, binary_data=file_contents)
+
+        cli_out_write(response)
 
 
 @conan_subcommand()
@@ -534,14 +597,17 @@ def build_info_append(conan_api: ConanAPI, parser, subparser, *args):
 
     subparser.add_argument("build_name", help="The current build name.")
     subparser.add_argument("build_number", help="The current build number.")
+    subparser.add_argument("output", help="Output file name")
 
     subparser.add_argument("--build-info", help="JSON file for the Build Info. You can add multiple files " \
-                                                "like --build-info=release.json --build-info=debug.json",
+                                                "like --build-info=release.json --build-info=debug.json. " \
+                                                "This command will also merge " ,
                            action="append")
 
     args = parser.parse_args(*args)
 
     all_modules = []
+    all_files = []
 
     for build_info_json in args.build_info:
         with open(build_info_json, 'r') as f:
@@ -550,8 +616,19 @@ def build_info_append(conan_api: ConanAPI, parser, subparser, *args):
                 # avoid repeating shared recipe modules between builds
                 if not any(d['id'] == module.get('id') for d in all_modules):
                     all_modules.append(module)
+            
+        # now add information for the manifest file
+        manifest_file = os.path.splitext(build_info_json)[0] + "_manifest.json"
+        with open(manifest_file, 'r') as f:
+            data = json.load(f)
+            for file in data.get("files"):
+                # avoid repeating shared recipe modules between builds
+                if not any(d['path'] == file.get('path') for d in all_files):
+                    all_files.append(file)
 
-    bi = BuildInfo(None, args.build_name, args.build_number)
-    bi_json = bi.header()
-    bi_json.update({"modules": all_modules})
-    cli_out_write(json.dumps(bi_json, indent=4))
+    bi = BuildInfo(None, args.build_name, args.build_number, args.output, modules=all_modules)
+
+    for file in all_files:
+        bi.add_file_to_manifest(file.get("path"), file.get("checksum"))
+
+    bi.save()
