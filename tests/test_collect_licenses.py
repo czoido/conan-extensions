@@ -57,4 +57,5 @@ def test_collect_licenses():
     save("conanfile.py", conanfile)
     run("conan compliance:collect-licenses conanfile.py")
 
+    # Test just for convenience, the next step should be to make it useful (useful assert, more conanfiles, posible errors)
     assert 0 == 0

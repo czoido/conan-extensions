@@ -38,9 +38,6 @@ def collect_licenses(conan_api, parser, *args):
     cwd = os.getcwd()
     path = conan_api.local.get_conanfile_path(
         args.path, cwd, py=None) if args.path else None
-    source_folder = os.path.dirname(path) if args.path else cwd
-    output_folder = make_abs_path(
-        args.output_folder, cwd) if args.output_folder else None
 
     # Basic collaborators: remotes, lockfile, profiles
     remotes = conan_api.remotes.list(args.remote) if not args.no_remote else []
@@ -50,7 +47,7 @@ def collect_licenses(conan_api, parser, *args):
                                                partial=args.lockfile_partial, overrides=overrides)
     profile_host, profile_build = conan_api.profiles.get_profiles_from_args(
         args)
-    # I keep this because I asume the information could be usefull, as it is in the install command
+    # I keep this because I asume the information could be useful, as it is in the install command
     print_profiles(profile_host, profile_build)
 
     # Graph computation (without installation of binaries)
@@ -71,7 +68,7 @@ def collect_licenses(conan_api, parser, *args):
 
     # Installation of binaries and consumer generators
     # I keep this for convenience, this way I dont have to install and then run the command
-    # Also needed for copy to work
+    # Also needed for copy to work propertly
     conan_api.install.install_binaries(deps_graph=deps_graph, remotes=remotes)
 
     conanfile = deps_graph.root.conanfile
@@ -99,3 +96,4 @@ def collect_licenses(conan_api, parser, *args):
         with open(cwd + '\\licenses\\licenses.txt', 'w') as f:
             for license_file in files:
                 f.write(license_file + '\n')
+    # The next step should be to do a more intense search, no just licenses as expressed in the assignment (license(s)/*, LICENSE.*, Copyright.*, etc)
