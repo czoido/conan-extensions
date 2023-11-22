@@ -4,6 +4,7 @@ import requests
 import yaml
 import json
 from rich.console import Console
+from rich import print as rich_print
 from rich.table import Table
 from conan.api.conan_api import ConanAPI
 from conan.api.model import ListPattern
@@ -40,6 +41,9 @@ def audit(conan_api: ConanAPI, parser, *args):
 
     display_vulnerabilities(osv_response.json())
 
+    patches_info = get_patches_info(conan_api, ref_to_audit)
+    display_patches(patches_info)
+
 def get_osv_payload(conan_api, ref_to_audit, use_commit):
     conandata_path = os.path.join(conan_api.cache.export_path(ref_to_audit), "conandata.yml")
     if "cci" in str(ref_to_audit.version) or use_commit:
@@ -59,6 +63,12 @@ def get_osv_payload(conan_api, ref_to_audit, use_commit):
     else:
         return {"package": {"name": str(ref_to_audit.name)}, "version": str(ref_to_audit.version)}
 
+def get_patches_info(conan_api, ref_to_audit):
+    conandata_path = os.path.join(conan_api.cache.export_path(ref_to_audit), "conandata.yml")
+    with open(conandata_path, 'r') as file:
+        parsed_yaml = yaml.safe_load(file)
+    return parsed_yaml.get('patches', {}).get(str(ref_to_audit.version), [])
+
 def extract_tag(url):
     match = re.search(r'/download/(v?\d+\.\d+\.\d+)/|/archive/(v?\d+\.\d+\.\d+)\.tar\.gz|/tags/(.+)\.tar\.gz', url)
     return match.group(1) or match.group(2) or match.group(3) if match else None
@@ -71,7 +81,7 @@ def get_commit_hash(url, tag):
 
 def display_vulnerabilities(data_json):
     console = Console()
-    table = Table(show_header=True, header_style="bold magenta")
+    table = Table(title="Vulnerabilities", show_header=True, header_style="bold green")
     table.add_column("ID", style="dim", width=12)
     table.add_column("Details")
     table.add_column("Published")
@@ -83,3 +93,15 @@ def display_vulnerabilities(data_json):
         table.add_row(vuln["id"], vuln["details"], vuln["published"], vuln["modified"], references)
 
     console.print(table) if data_json else print("No vulnerabilities found.")
+
+def display_patches(patches):
+    console = Console()
+    table = Table(title="Patches", show_header=True, header_style="bold green")
+    table.add_column("Description")
+    table.add_column("File")
+    table.add_column("Type")
+
+    for patch in patches:
+        table.add_row(patch["patch_description"], patch["patch_file"], patch["patch_type"])
+
+    console.print(table) if patches else print("No patches found for this version.")
