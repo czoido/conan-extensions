@@ -5,27 +5,104 @@ import yaml
 import json
 from rich.console import Console
 from rich.table import Table
+from conan.api.output import ConanOutput, Color
+from conan.cli.printers.graph import print_graph_packages, print_graph_basic
+from conan.cli.formatters.graph.graph_info_text import format_graph_info
+from conan.cli.formatters.graph import format_graph_json
 from conan.api.conan_api import ConanAPI
 from conan.api.model import ListPattern
+from conan.errors import ConanException
 from conan.cli.command import conan_command, OnceArgument
+from conan.cli.args import common_graph_args
 
 
-def default_formatter(results):
-    display_vulnerabilities(results[0])
-    display_patches(results[1])
+
+#def default_formatter(results):
+#    display_vulnerabilities(results[0])
+#    display_patches(results[1])
 
 
-def json_formatter(results):
-    print(json.dumps(results[0], indent=4))
+#def json_formatter(results):
+#    print(json.dumps(results[0], indent=4))
 
 
-@conan_command(group="Security", formatters={"text": default_formatter, "json": json_formatter})
+
+def validate_args(args):
+    if args.requires and (args.name or args.version or args.user or args.channel):
+        raise ConanException("Can't use --name, --version, --user or --channel arguments with "
+                             "--requires")
+    if args.channel and not args.user:
+        raise ConanException("Can't specify --channel without --user")
+    if not args.path and not args.requires and not args.tool_requires:
+        raise ConanException("Please specify a path to a conanfile or a '--requires=<ref>'")
+    if args.path and (args.requires or args.tool_requires):
+        raise ConanException("--requires and --tool-requires arguments are incompatible with "
+                             f"[path] '{args.path}' argument")
+
+@conan_command(group="Security", formatters={"text": format_graph_info,
+                                             "json": format_graph_json})
 def audit(conan_api: ConanAPI, parser, *args):
     """
     Audit a single conan package from a remote server.
 
     It downloads just the recipe for the package, but not its transitive dependencies.
     """
+    common_graph_args(parser)
+    parser.add_argument("--check-updates", default=False, action="store_true",
+                           help="Check if there are recipe updates")
+    parser.add_argument("--package-filter", action="append",
+                           help='Print information only for packages that match the patterns')
+    args = parser.parse_args(*args)
+
+    # parameter validation
+    validate_args(args)
+
+    cwd = os.getcwd()
+    path = conan_api.local.get_conanfile_path(args.path, cwd, py=None) if args.path else None
+
+    # Basic collaborators, remotes, lockfile, profiles
+    remotes = conan_api.remotes.list(args.remote) if not args.no_remote else []
+    overrides = eval(args.lockfile_overrides) if args.lockfile_overrides else None
+    lockfile = conan_api.lockfile.get_lockfile(lockfile=args.lockfile,
+                                               conanfile_path=path,
+                                               cwd=cwd,
+                                               partial=args.lockfile_partial,
+                                               overrides=overrides)
+    profile_host, profile_build = conan_api.profiles.get_profiles_from_args(args)
+
+    if path:
+        deps_graph = conan_api.graph.load_graph_consumer(path, args.name, args.version,
+                                                         args.user, args.channel,
+                                                         profile_host, profile_build, lockfile,
+                                                         remotes, args.update,
+                                                         check_updates=args.check_updates,
+                                                         is_build_require=False)
+    else:
+        deps_graph = conan_api.graph.load_graph_requires(args.requires, args.tool_requires,
+                                                         profile_host, profile_build, lockfile,
+                                                         remotes, args.update,
+                                                         check_updates=args.check_updates)
+    print_graph_basic(deps_graph)
+    if deps_graph.error:
+        ConanOutput().info("Graph error", Color.BRIGHT_RED)
+        ConanOutput().info("    {}".format(deps_graph.error), Color.BRIGHT_RED)
+    else:
+        conan_api.graph.analyze_binaries(deps_graph, args.build, remotes=remotes, update=args.update,
+                                         lockfile=lockfile)
+        print_graph_packages(deps_graph)
+
+        conan_api.install.install_system_requires(deps_graph, only_info=True)
+        conan_api.install.install_sources(deps_graph, remotes=remotes)
+
+        lockfile = conan_api.lockfile.update_lockfile(lockfile, deps_graph, args.lockfile_packages,
+                                                      clean=args.lockfile_clean)
+        conan_api.lockfile.save_lockfile(lockfile, args.lockfile_out, cwd)
+
+
+    return {"graph": deps_graph,
+            "package_filter": args.package_filter,
+            "conan_api": conan_api}
+
     parser.add_argument('reference', nargs="?",
                         help="Conan package reference in the form 'pkg/version#revision', If revision is not specified, it is assumed latest one.")
     parser.add_argument("--use-commit", action='store_true',
@@ -50,9 +127,8 @@ def audit(conan_api: ConanAPI, parser, *args):
     conan_api.download.recipe(ref_to_audit, remote)
 
     osv_payload = get_osv_payload(conan_api, ref_to_audit, args.use_commit)
-    osv_response = requests.post(
-        "https://api.osv.dev/v1/query", json=osv_payload)
-
+    osv_response = requests.post("https://api.osv.dev/v1/query", json=osv_payload)
+    
     patches_info = get_patches_info(conan_api, ref_to_audit)
 
     return (osv_response.json(), patches_info)
