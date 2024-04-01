@@ -40,7 +40,6 @@ def display_vulnerabilities(list_of_data_json):
             continue
 
         package_version = data_json["data"]["packageVersion"]
-        #console.print(f"Package: {package_version['package']['name']} Version: {package_version['version']}", style="bold green")
 
         vulnerabilities = package_version["vulnerabilities"]["edges"]
         total_vulnerabilities += len(vulnerabilities)
@@ -130,7 +129,7 @@ query = textwrap.dedent("""
 )
 def catalog(conan_api, parser, *args):
     """
-    Check details for a specific package version.
+    Use JFrog catalog to check secuirty details for a Conan graph using a conanfile.txt/py.
     """
     parser.add_argument(
         "path",
