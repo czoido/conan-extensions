@@ -33,7 +33,9 @@ def display_vulnerabilities(list_of_data_json):
     for data_json in list_of_data_json:
         if (
             not data_json
+            or "errors" in data_json
             or "data" not in data_json
+            or data_json["data"] is None
             or "packageVersion" not in data_json["data"]
         ):
             # If there's an issue with the current JSON, skip to the next one
@@ -129,7 +131,7 @@ query = textwrap.dedent("""
 )
 def catalog(conan_api, parser, *args):
     """
-    Use JFrog catalog to check secuirty details for a Conan graph using a conanfile.txt/py.
+    Use JFrog catalog to check security details for a Conan graph using a conanfile.txt/py.
     """
     parser.add_argument(
         "path",
@@ -157,12 +159,12 @@ def catalog(conan_api, parser, *args):
     args = parser.parse_args(*args)
 
     graph_result = conan_api.command.run(["graph", "info", args.path])
-    dependencies = graph_result.get("graph").nodes[1:]
+    root = graph_result.get("graph").nodes[0]
 
     transitive_vulnerabilities = []
     with Progress() as progress:
-        task = progress.add_task("[cyan]Requesting package info...", total=len(dependencies))
-        for dep in dependencies:
+        task = progress.add_task("[cyan]Requesting package info...", total=len(root.transitive_deps))
+        for dep in root.transitive_deps:
             name = str(dep.ref.name)
             version = str(dep.ref.version)
 
