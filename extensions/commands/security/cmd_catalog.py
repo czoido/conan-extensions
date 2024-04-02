@@ -13,20 +13,10 @@ from conan.errors import ConanException
 
 def display_vulnerabilities(list_of_data_json):
     console = Console()
-    severity_to_color = {
-        "Critical": "bold red",
-        "High": "bold yellow",
-        "Medium": "yellow",
-        "Low": "green",
-        "Informational": "blue",
-        "Unknown": "grey",
-    }
-
     # Create a table for the vulnerabilities
     table = Table(title="Vulnerabilities", show_header=False, header_style="bold green")
     table.add_column("ID", style="dim", width=15)
     table.add_column("Details")
-    table.add_column("Severity")
 
     total_vulnerabilities = 0
 
@@ -56,19 +46,16 @@ def display_vulnerabilities(list_of_data_json):
             sorted_vulns = sorted(vulnerabilities, key=lambda x: x["node"]["name"])
             for vuln in sorted_vulns:
                 node = vuln["node"]
-                severity_color = severity_to_color.get(node["severity"], "grey")
                 # Add rows to the table with the corresponding severity color
                 table.add_row(
                     node["name"],
                     textwrap.shorten(node["description"], width=80, placeholder="..."),
-                    f"[{severity_color}]{node['severity']}[/]",
                 )
         else:
                 table.add_section()
                 table.add_row(
                     None,
                     f"[green]{package_version['package']['name']}/{package_version['version']}: no vulnerabilities found[/]",
-                    None,
                 )
                 table.add_section()
 
