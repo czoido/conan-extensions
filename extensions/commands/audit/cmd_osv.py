@@ -20,30 +20,41 @@ def display_vulnerabilities(list_of_data_json):
     table.add_column("Details")
 
     num_vulns = 0
+    packages_without_vulns = []  # List to keep track of packages without vulnerabilities
+
     for data_json in list_of_data_json:
         vulns = data_json.get("vulns", [])
-        if not vulns:
+        ref = data_json.get('ref')  # Reference to the package
+
+        if vulns:
             table.add_section()
             table.add_row(
                 None,
-                f"[green]{data_json.get('ref')}: no vulnerabilities found[/]",
-            )
-            table.add_section()
-        else:
-            table.add_section()
-            table.add_row(
-                None,
-                f"[red]{data_json.get('ref')}: {len(vulns)} vulnerabilities[/]\n",
+                f"[red]{ref}: {len(vulns)} vulnerabilities[/]\n",
             )
             for vuln in vulns:
                 table.add_row(
                     vuln["id"],
-                    vuln["details"]
+                    textwrap.shorten(vuln["details"], width=80, placeholder="...")
                 )
-                num_vulns = num_vulns + 1
-            table.add_section()
-    console.print(table)
-    console.print(f"Total vulnerabilities found: {num_vulns}", style="bold yellow")
+                num_vulns += 1
+        else:
+            packages_without_vulns.append(f"[green]{ref}[/]")  # Add package ref to the list
+
+    # Print the table only if there are vulnerabilities found
+    if num_vulns > 0:
+        console.print(table)
+
+    # Print the total number of vulnerabilities found
+    style = "bold yellow" if num_vulns>0 else "bold green"
+    console.print(f"Total vulnerabilities found: {num_vulns}", style=style)
+
+    # Print the summary for packages without vulnerabilities
+    if packages_without_vulns:
+        console.print(
+            "No vulnerabilities found in: " + ", ".join(packages_without_vulns),
+            style="bold green"
+        )
 
 
 

@@ -13,12 +13,12 @@ from conan.errors import ConanException
 
 def display_vulnerabilities(list_of_data_json):
     console = Console()
-    # Create a table for the vulnerabilities
     table = Table(title="Vulnerabilities", show_header=False, header_style="bold green")
     table.add_column("ID", style="dim", width=15)
     table.add_column("Details")
 
     total_vulnerabilities = 0
+    packages_without_vulns = []
 
     for data_json in list_of_data_json:
         if (
@@ -28,42 +28,45 @@ def display_vulnerabilities(list_of_data_json):
             or data_json["data"] is None
             or "packageVersion" not in data_json["data"]
         ):
-            # If there's an issue with the current JSON, skip to the next one
-            continue
+            continue  # Skip to the next item if there's an issue with the current JSON
 
         package_version = data_json["data"]["packageVersion"]
-
         vulnerabilities = package_version["vulnerabilities"]["edges"]
-        total_vulnerabilities += len(vulnerabilities)
+        ref = f"{package_version['package']['name']}/{package_version['version']}"
         if vulnerabilities:
+            # Accumulate total vulnerabilities and add them to the table
             table.add_section()
             table.add_row(
                 None,
-                f"[red]{package_version['package']['name']}/{package_version['version']}: {total_vulnerabilities} vulnerabilities found[/]",
-                None,
+                f"[red]{ref}: {len(vulnerabilities)} vulnerabilities[/]\n",
             )
-            table.add_section()
+            total_vulnerabilities += len(vulnerabilities)
             sorted_vulns = sorted(vulnerabilities, key=lambda x: x["node"]["name"])
             for vuln in sorted_vulns:
                 node = vuln["node"]
-                # Add rows to the table with the corresponding severity color
                 table.add_row(
                     node["name"],
-                    textwrap.shorten(node["description"], width=80, placeholder="..."),
+                    textwrap.shorten(node["description"], width=80, placeholder="...")
                 )
         else:
-                table.add_section()
-                table.add_row(
-                    None,
-                    f"[green]{package_version['package']['name']}/{package_version['version']}: no vulnerabilities found[/]",
-                )
-                table.add_section()
+            # Add package name to the list of packages without vulnerabilities
+            packages_without_vulns.append(f"[green]{ref}[/]")
 
+    # Print the table only if there are vulnerabilities found
+    if total_vulnerabilities > 0:
+        console.print(table)
 
-    console.print(table)
+    style = "bold yellow" if total_vulnerabilities>0 else "bold green"
     console.print(
-        f"Total vulnerabilities found: {total_vulnerabilities}", style="bold yellow"
+        f"Total vulnerabilities found: {total_vulnerabilities}", style=style
     )
+
+    # Print the list of packages without vulnerabilities
+    if packages_without_vulns:
+        console.print(
+            "No vulnerabilities found in: " + ", ".join(packages_without_vulns),
+            style="green"
+        )
 
 
 
@@ -118,7 +121,7 @@ query = textwrap.dedent("""
 )
 def catalog(conan_api, parser, *args):
     """
-    Use JFrog catalog to check security details for a Conan graph using a conanfile.txt/py.
+    Use JFrog Catalog to check security details for a Conan graph using a conanfile.txt/py.
     """
     parser.add_argument(
         "path",
