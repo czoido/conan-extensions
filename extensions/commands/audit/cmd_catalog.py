@@ -6,6 +6,7 @@ import requests
 from rich.console import Console
 from rich.table import Table
 from rich.progress import Progress
+from rich.text import Text
 
 from conan.cli.command import conan_command
 from conan.errors import ConanException
@@ -44,13 +45,15 @@ def display_vulnerabilities(list_of_data_json):
             sorted_vulns = sorted(vulnerabilities, key=lambda x: x["node"]["name"])
             for vuln in sorted_vulns:
                 node = vuln["node"]
+                reference_url = node["references"][0] if node["references"] else "#"
+                vulnerability_name = Text(node["name"], style="link " + reference_url)
                 table.add_row(
-                    node["name"],
+                    vulnerability_name,
                     textwrap.shorten(node["description"], width=80, placeholder="...")
                 )
         else:
             # Add package name to the list of packages without vulnerabilities
-            packages_without_vulns.append(f"[green]{ref}[/]")
+            packages_without_vulns.append(f"[white]{ref}[/]")
 
     # Print the table only if there are vulnerabilities found
     if total_vulnerabilities > 0:
@@ -64,9 +67,11 @@ def display_vulnerabilities(list_of_data_json):
     # Print the list of packages without vulnerabilities
     if packages_without_vulns:
         console.print(
-            "No vulnerabilities found in: " + ", ".join(packages_without_vulns),
-            style="green"
+            "No vulnerabilities found in: " + ", ".join(packages_without_vulns)
         )
+    console.print("\n")
+    console.print("Vulnerability information provided by [link=https://jfrog.com/help/r/jfrog-catalog/jfrog-catalog]JFrog Catalog[/]", style="bold green")
+    console.print("\n")
 
 
 
@@ -98,6 +103,7 @@ query = textwrap.dedent("""
                                 cvss {
                                     preferredBaseScore
                                 }
+                                references
                                 aliases
                                 advisories {
                                     name
