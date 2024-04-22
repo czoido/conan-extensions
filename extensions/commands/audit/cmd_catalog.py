@@ -7,6 +7,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.progress import Progress
 from rich.text import Text
+from rich.panel import Panel
 
 from conan.cli.command import conan_command
 from conan.errors import ConanException
@@ -14,6 +15,7 @@ from conan.errors import ConanException
 
 def display_vulnerabilities(list_of_data_json):
     console = Console()
+    console.print("\n")
     table = Table(title="Vulnerabilities", show_header=False, header_style="bold green")
     table.add_column("ID", style="dim", width=15)
     table.add_column("Details")
@@ -154,8 +156,20 @@ def catalog(conan_api, parser, *args):
 
     args = parser.parse_args(*args)
 
+    console = Console()
+
+    panel = Panel("Calculating Conan graph", style="bold green", expand=False)
+    console.print(panel)
+
+
     graph_result = conan_api.command.run(["graph", "info", args.path])
     root = graph_result.get("graph").nodes[0]
+
+    panel = Panel("Requestion vulnerability information to JFrog Catalog", style="bold green", expand=False)
+
+    console.print("\n")
+    console.print(panel)
+    console.print("\n")
 
     transitive_vulnerabilities = []
     with Progress() as progress:
@@ -187,6 +201,6 @@ def catalog(conan_api, parser, *args):
             )
             data_json = response.json()
             transitive_vulnerabilities.append(data_json)
-            progress.update(task, description=f"[cyan]Processing {name}/{version}...",advance=1)
+            progress.update(task, description=f"[cyan]Requesting security information for {name}/{version}...",advance=1)
             time.sleep(0.05)
     return transitive_vulnerabilities

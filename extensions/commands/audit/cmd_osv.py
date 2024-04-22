@@ -15,6 +15,7 @@ from conan.cli.command import conan_command
 
 def display_vulnerabilities(list_of_data_json):
     console = Console()
+    console.print("\n")
     table = Table(title="Vulnerabilities", show_header=False)
     table.add_column("ID", style="dim", width=15)
     table.add_column("Details")
@@ -161,13 +162,16 @@ def osv(conan_api: ConanAPI, parser, *args):
     graph_result = conan_api.command.run(["graph", "info", args.path])
     root = graph_result.get("graph").nodes[0]
     
+    console = Console()
+    console.print("\n")
+
     transitive_vulnerabilities = []
     with Progress() as progress:
-        task = progress.add_task("[cyan]Requesting package info...", total=len(root.transitive_deps))
+        task = progress.add_task("[cyan]Requesting security information for: ", total=len(root.transitive_deps))
         for dep in root.transitive_deps:
             data_json = get_vulnerabilities(conan_api, dep)
             data_json.update({"ref": str(dep.ref)})
             transitive_vulnerabilities.append(data_json)
-            progress.update(task, description=f"[cyan]Processing {str(dep.ref)}...",advance=1)
+            progress.update(task, description=f"[cyan]Requesting security information for: {str(dep.ref)}...",advance=1)
             time.sleep(0.1)
     return transitive_vulnerabilities
