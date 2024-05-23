@@ -1,11 +1,8 @@
 import json
 import os
 import textwrap
-import time
 import requests
-from conan.api.model import MultiPackagesList
-from conan.api.output import ConanOutput, cli_out_write
-from conan.cli import make_abs_path
+from conan.api.output import cli_out_write
 from conan.cli.args import common_graph_args, validate_common_graph_args
 from conan.cli.printers.graph import print_graph_packages, print_graph_basic
 from rich.console import Console
@@ -15,7 +12,6 @@ from rich.text import Text
 from rich.panel import Panel
 
 from conan.cli.command import conan_command
-from conan.errors import ConanException
 
 
 def display_vulnerabilities(list_of_data_json):
@@ -115,9 +111,9 @@ def catalog(conan_api, parser, *args):
     """
     common_graph_args(parser)
     parser.add_argument("--check-updates", default=False, action="store_true",
-                           help="Check if there are recipe updates")
+                        help="Check if there are recipe updates")
     parser.add_argument("--build-require", action='store_true', default=False,
-                           help='Whether the provided reference is a build-require')
+                        help='Whether the provided reference is a build-require')
 
     parser.add_argument("-t", "--token", help="Conan Catalog API token")
     args = parser.parse_args(*args)
@@ -137,6 +133,9 @@ def catalog(conan_api, parser, *args):
                                                partial=args.lockfile_partial,
                                                overrides=overrides)
     profile_host, profile_build = conan_api.profiles.get_profiles_from_args(args)
+
+    # TODO: Make this load only either a name of a pkglist, don't let it build the graph
+    # Like this for now so we can test for larger graphs directly
 
     if path:
         deps_graph = conan_api.graph.load_graph_consumer(path, args.name, args.version,
