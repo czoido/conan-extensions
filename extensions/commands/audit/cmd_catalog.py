@@ -83,6 +83,28 @@ def json_formatter(results):
     cli_out_write(json.dumps(results, indent=4))
 
 
+def get_vulnerabilities(conan_api, refs, token, console):
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    result = {"data": {}}
+    with Progress(console=console) as progress:
+        task = progress.add_task("[cyan]Requesting information...", total=len(refs))
+        for ref in refs:
+            progress.update(task, description=f"[cyan]Requesting security information for {ref}...", advance=0)
+            response = requests.post(
+                "http://127.0.0.1:5000/api/v1/query",
+                headers=headers,
+                json={
+                    "reference": ref,
+                },
+            )
+            progress.update(task, description=f"[cyan]Requested security information for {ref}...", advance=1)
+            result["data"].update(response.json()["data"])
+    return result
+
+
 @conan_command(
     group="Security",
     formatters={"text": display_vulnerabilities, "json": json_formatter},
@@ -158,15 +180,4 @@ def catalog(conan_api, parser, *args):
     console.print(panel)
     console.print("\n")
 
-    headers = {"Content-Type": "application/json", "Accept": "application/json"}
-    if args.token:
-        headers["Authorization"] = f"Bearer {args.token}"
-
-    response = requests.post(
-        "http://127.0.0.1:5000/api/v1/query",
-        headers=headers,
-        json={
-            "references": list(refs),
-        },
-    )
-    return response.json()
+    return get_vulnerabilities(conan_api, refs, args.token, console)
