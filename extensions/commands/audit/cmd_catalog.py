@@ -32,7 +32,7 @@ def display_vulnerabilities(list_of_data_json):
 
     for library_key, library_data in list_of_data_json["data"].items():
         vulnerabilities = library_data["vulnerabilities"]["edges"]
-        ref = f"{library_data['package']['name']}/{library_data['version']}"
+        ref = f"{library_key}/{library_data['version']}"
         if vulnerabilities:
             # Accumulate total vulnerabilities and add them to the table
             table.add_section()
