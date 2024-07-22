@@ -101,9 +101,11 @@ def get_proxy_vulnerabilities(conan_api, refs, token, console):
                 result["data"].update(response.json()["data"])
             elif response.status_code == 429:
                 console.print("[yellow]Rate limit exceeded[/]")
+                if response.headers.get("Retry-After"):
+                    console.print(f"Retry after {response.headers.get('Retry-After')} seconds")
                 if not token:
-                    console.print(f"[yellow]Please provide a token to increase the rate limit[/]."
-                                  f"You can get one from [link=https://conancenter-stg.jfrog.team/private/register]Conan Catalog Page[/]")
+                    console.print(f"[yellow]Please provide a token to increase the rate limit.")
+                    console.print(f"You can get one from [link=https://conancenter-stg.jfrog.team/private/register]Conan Catalog Page")
                     break
 
     return result
