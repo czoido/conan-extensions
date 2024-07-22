@@ -2,16 +2,17 @@ import json
 import os
 import textwrap
 import requests
-from conan.api.output import cli_out_write, ConanOutput
-from conan.cli.args import common_graph_args, validate_common_graph_args
-from conan.cli.printers.graph import print_graph_packages, print_graph_basic
+
 from rich.console import Console
 from rich.table import Table
 from rich.progress import Progress
 from rich.text import Text
-from rich.panel import Panel
 
+from conan.api.output import cli_out_write, ConanOutput
+from conan.cli.args import common_graph_args, validate_common_graph_args
+from conan.cli.printers.graph import print_graph_basic
 from conan.cli.command import conan_command
+
 
 
 def display_vulnerabilities(list_of_data_json):
@@ -79,18 +80,12 @@ def json_formatter(results):
     cli_out_write(json.dumps(results, indent=4))
 
 
-def get_proxy_vulnerabilities(refs, token):
+def get_cves_from_conan_proxy(refs, token):
     headers = {"Content-Type": "application/json", "Accept": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
 
     result = {"data": {}}
-
-    from rich.console import Console
-    from rich.table import Table
-    from rich.progress import Progress
-    from rich.text import Text
-    from rich.panel import Panel
 
     console = Console(stderr=True)
 
@@ -108,13 +103,11 @@ def get_proxy_vulnerabilities(refs, token):
             if response.status_code == 200:
                 result["data"].update(response.json()["data"])
             elif response.status_code == 429:
-                console.print("[yellow]Rate limit exceeded[/]")
-                if response.headers.get("Retry-After"):
-                    console.print(f"Retry after {response.headers.get('Retry-After')} seconds")
+                msg = "[red]Rate limit exceeded. Results may be incomplete. "
                 if not token:
-                    console.print(f"[yellow]Please provide a token to increase the rate limit.")
-                    console.print(f"You can get one from the [link=https://conancenter-stg.jfrog.team/private/register]Conan Catalog Page")
-                    break
+                    msg += "Please [link=https://conancenter-stg.jfrog.team/private/register]register to get a token[/] to increase the rate limit."
+                console.print(msg)
+                break
             progress.update(task, description=f"[cyan]Checked: {ref}", advance=1)
 
     return result
@@ -128,7 +121,7 @@ def convert_custom_response(response):
     return {"data": {}}
 
 
-def get_custom_vulnerabilities(refs, token, catalog_url):
+def get_cves_from_jfrog_catalog(refs, token, catalog_url):
     headers = {"Content-Type": "application/json", "Accept": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -162,7 +155,7 @@ def catalog(conan_api, parser, *args):
 
     parser.add_argument("--transitive", help="Load vulnerabilities for transitive dependencies", action="store_true", default=False)
     parser.add_argument("-t", "--token", help="Conan Catalog API token")
-    parser.add_argument("--catalog-url", help="Custom Catalog API URL, will use the public Conan Catalog proxy if none given", default=None)
+    parser.add_argument("--catalog-url", help="URL of the JFrog Catalog API. This option is only functional if you have your own JFrog Catalog instance.", default=None)
     args = parser.parse_args(*args)
 
     # parameter validation
@@ -211,6 +204,6 @@ def catalog(conan_api, parser, *args):
     ConanOutput().info(f"Requesting vulnerability information from the JFrog Catalog for: {', '.join(refs)}")
 
     if args.catalog_url is not None:
-        return get_custom_vulnerabilities(conan_api, refs, args.token, args.catalog_url)
+        return get_cves_from_jfrog_catalog(refs, args.token, args.catalog_url)
     else:
-        return get_proxy_vulnerabilities(conan_api, refs, args.token)
+        return get_cves_from_conan_proxy(refs, args.token)
