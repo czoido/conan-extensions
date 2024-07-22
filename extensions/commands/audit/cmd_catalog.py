@@ -2,7 +2,7 @@ import json
 import os
 import textwrap
 import requests
-from conan.api.output import cli_out_write
+from conan.api.output import cli_out_write, ConanOutput
 from conan.cli.args import common_graph_args, validate_common_graph_args
 from conan.cli.printers.graph import print_graph_packages, print_graph_basic
 from rich.console import Console
@@ -79,7 +79,7 @@ def json_formatter(results):
     cli_out_write(json.dumps(results, indent=4))
 
 
-def get_vulnerabilities(conan_api, refs, token, console):
+def get_proxy_vulnerabilities(conan_api, refs, token, console):
     headers = {"Content-Type": "application/json", "Accept": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
@@ -90,14 +90,48 @@ def get_vulnerabilities(conan_api, refs, token, console):
         for ref in refs:
             progress.update(task, description=f"[cyan]Requesting security information for {ref}...", advance=0)
             response = requests.post(
-                "http://127.0.0.1:5000/api/v1/query",
+                "https://conancenter-stg-api.jfrog.team/api/v1/query",
                 headers=headers,
                 json={
                     "reference": ref,
                 },
             )
             progress.update(task, description=f"[cyan]Requested security information for {ref}...", advance=1)
-            result["data"].update(response.json()["data"])
+            if response.status_code == 200:
+                result["data"].update(response.json()["data"])
+            elif response.status_code == 429:
+                console.print("[yellow]Rate limit exceeded[/]")
+                if not token:
+                    console.print(f"[yellow]Please provide a token to increase the rate limit[/]."
+                                  f"You can get one from [link=https://conancenter-stg.jfrog.team/private/register]Conan Catalog Page[/]")
+                    break
+
+    return result
+
+
+def generate_graphql_custom_query(refs):
+    return {}
+
+
+def convert_custom_response(response):
+    return {"data": {}}
+
+
+def get_custom_vulnerabilities(conan_api, refs, token, catalog_url, console):
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    query_json = generate_graphql_custom_query(refs)
+
+    console.print("[cyan]Requesting information...")
+    response = requests.post(
+        catalog_url,
+        headers=headers,
+        json=query_json,
+    )
+    console.print("[green]Requested information...")
+    result = convert_custom_response(response)
     return result
 
 
@@ -115,7 +149,9 @@ def catalog(conan_api, parser, *args):
     parser.add_argument("--build-require", action='store_true', default=False,
                         help='Whether the provided reference is a build-require')
 
+    parser.add_argument("--transitive", help="Load vulnerabilities for transitive dependencies", action="store_true", default=False)
     parser.add_argument("-t", "--token", help="Conan Catalog API token")
+    parser.add_argument("--catalog-url", help="Custom Catalog API URL, will use the public Conan Catalog proxy if none given", default=None)
     args = parser.parse_args(*args)
 
     # parameter validation
@@ -134,49 +170,67 @@ def catalog(conan_api, parser, *args):
                                                overrides=overrides)
     profile_host, profile_build = conan_api.profiles.get_profiles_from_args(args)
 
-    # TODO: Make this load only either a name of a pkglist, don't let it build the graph
-    # Like this for now so we can test for larger graphs directly
-
-    if path:
-        deps_graph = conan_api.graph.load_graph_consumer(path, args.name, args.version,
-                                                         args.user, args.channel,
-                                                         profile_host, profile_build, lockfile,
-                                                         remotes, args.update,
-                                                         check_updates=args.check_updates,
-                                                         is_build_require=args.build_require)
+    # TODO: Support pkglist?
+    if not args.transitive and not path:
+        # If --transitive is not passed, and no path, no need to expand any graph
+        refs = args.requires
     else:
-        deps_graph = conan_api.graph.load_graph_requires(args.requires, args.tool_requires,
-                                                         profile_host, profile_build, lockfile,
-                                                         remotes, args.update,
-                                                         check_updates=args.check_updates)
-    print_graph_basic(deps_graph)
-    if not deps_graph.error:
-        conan_api.graph.analyze_binaries(deps_graph, args.build, remotes=remotes, update=args.update,
-                                         lockfile=lockfile)
-        print_graph_packages(deps_graph)
+        if path:
+            deps_graph = conan_api.graph.load_graph_consumer(path, args.name, args.version,
+                                                             args.user, args.channel,
+                                                             profile_host, profile_build, lockfile,
+                                                             remotes, args.update,
+                                                             check_updates=args.check_updates,
+                                                             is_build_require=args.build_require)
+        else:
+            deps_graph = conan_api.graph.load_graph_requires(args.requires, args.tool_requires,
+                                                             profile_host, profile_build, lockfile,
+                                                             remotes, args.update,
+                                                             check_updates=args.check_updates)
+        print_graph_basic(deps_graph)
+        if deps_graph.error:
+            return {"error": deps_graph.error}
 
-        conan_api.install.install_system_requires(deps_graph, only_info=True)
-        conan_api.install.install_sources(deps_graph, remotes=remotes)
+        if args.transitive:
+            refs = list(set(f"{node.ref.name}/{node.ref.version}" for node in deps_graph.nodes[1:]))
+        else:
+            root_node = deps_graph.nodes[1]
+            refs = [f"{root_node.ref.name}/{root_node.ref.version}"]
 
-        lockfile = conan_api.lockfile.update_lockfile(lockfile, deps_graph, args.lockfile_packages,
-                                                      clean=args.lockfile_clean)
-        conan_api.lockfile.save_lockfile(lockfile, args.lockfile_out, cwd)
+    # test
+    console = _print_preface(refs)
+
+    if args.catalog_url is not None:
+        return get_custom_vulnerabilities(conan_api, refs, args.token, args.catalog_url, console)
     else:
-        return {"error": deps_graph.error}
+        return get_proxy_vulnerabilities(conan_api, refs, args.token, console)
 
-    refs = list(set(f"{node.ref.name}/{node.ref.version}" for node in deps_graph.nodes[1:]))
 
-    console = Console()
+def _print_preface(refs):
+    # this would be the idea to support both rich and normal output, but it can get super cumbersome
+    try:
+        from rich.console import Console
+        from rich.table import Table
+        from rich.progress import Progress
+        from rich.text import Text
+        from rich.panel import Panel
 
-    panel = Panel("Calculating Conan graph", style="bold green", expand=False)
-    console.print(panel)
+        console = Console(stderr=True)
 
-    console.print(f"Found {len(refs)} packages in the Conan graph: {refs}")
+        panel = Panel("Calculating Conan graph", style="bold green", expand=False)
+        console.print(panel)
 
-    panel = Panel("Requesting vulnerability information to JFrog Catalog", style="bold green", expand=False)
+        console.print(f"Found {len(refs)} packages in the Conan graph: {refs}")
 
-    console.print("\n")
-    console.print(panel)
-    console.print("\n")
+        panel = Panel("Requesting vulnerability information to JFrog Catalog", style="bold green", expand=False)
 
-    return get_vulnerabilities(conan_api, refs, args.token, console)
+        console.print("\n")
+        console.print(panel)
+        console.print("\n")
+
+        return console
+    except ImportError:
+        out = ConanOutput()
+        out.info(f"Found {len(refs)} packages in the Conan graph: {refs}")
+        out.info("Requesting vulnerability information to JFrog Catalog")
+        return None
