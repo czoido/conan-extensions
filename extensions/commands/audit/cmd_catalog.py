@@ -197,7 +197,7 @@ def catalog(conan_api, parser, *args):
             refs = list(set(f"{node.ref.name}/{node.ref.version}" for node in deps_graph.nodes[1:]))
         else:
             root_node = deps_graph.nodes[1]
-            refs = [f"{root_node.ref.name}/{root_node.ref.version}"]
+            refs = list(set(f"{dep.ref.name}/{dep.ref.version}" for dep in root_node.dependencies.direct))
 
     # test
     console = _print_preface(refs)
