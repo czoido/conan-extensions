@@ -79,16 +79,25 @@ def json_formatter(results):
     cli_out_write(json.dumps(results, indent=4))
 
 
-def get_proxy_vulnerabilities(conan_api, refs, token, console):
+def get_proxy_vulnerabilities(refs, token):
     headers = {"Content-Type": "application/json", "Accept": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
 
     result = {"data": {}}
+
+    from rich.console import Console
+    from rich.table import Table
+    from rich.progress import Progress
+    from rich.text import Text
+    from rich.panel import Panel
+
+    console = Console(stderr=True)
+
     with Progress(console=console) as progress:
-        task = progress.add_task("[cyan]Requesting information...", total=len(refs))
+        task = progress.add_task("[cyan]Requesting information", total=len(refs))
         for ref in refs:
-            progress.update(task, description=f"[cyan]Requesting security information for {ref}...", advance=0)
+            progress.update(task, description=f"[cyan]Checking: {ref}", advance=0)
             response = requests.post(
                 "https://conancenter-stg-api.jfrog.team/api/v1/query",
                 headers=headers,
@@ -96,7 +105,6 @@ def get_proxy_vulnerabilities(conan_api, refs, token, console):
                     "reference": ref,
                 },
             )
-            progress.update(task, description=f"[cyan]Requested security information for {ref}...", advance=1)
             if response.status_code == 200:
                 result["data"].update(response.json()["data"])
             elif response.status_code == 429:
@@ -105,8 +113,9 @@ def get_proxy_vulnerabilities(conan_api, refs, token, console):
                     console.print(f"Retry after {response.headers.get('Retry-After')} seconds")
                 if not token:
                     console.print(f"[yellow]Please provide a token to increase the rate limit.")
-                    console.print(f"You can get one from [link=https://conancenter-stg.jfrog.team/private/register]Conan Catalog Page")
+                    console.print(f"You can get one from the [link=https://conancenter-stg.jfrog.team/private/register]Conan Catalog Page")
                     break
+            progress.update(task, description=f"[cyan]Checked: {ref}", advance=1)
 
     return result
 
@@ -119,20 +128,20 @@ def convert_custom_response(response):
     return {"data": {}}
 
 
-def get_custom_vulnerabilities(conan_api, refs, token, catalog_url, console):
+def get_custom_vulnerabilities(refs, token, catalog_url):
     headers = {"Content-Type": "application/json", "Accept": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
 
     query_json = generate_graphql_custom_query(refs)
 
-    console.print("[cyan]Requesting information...")
+    ConanOutput().info("[cyan]Requesting information...")
     response = requests.post(
         catalog_url,
         headers=headers,
         json=query_json,
     )
-    console.print("[green]Requested information...")
+    ConanOutput().info("[green]Requested information...")
     result = convert_custom_response(response)
     return result
 
@@ -199,40 +208,9 @@ def catalog(conan_api, parser, *args):
             root_node = deps_graph.nodes[1]
             refs = list(set(f"{dep.ref.name}/{dep.ref.version}" for dep in root_node.dependencies.direct))
 
-    # test
-    console = _print_preface(refs)
+    ConanOutput().info(f"Requesting vulnerability information from the JFrog Catalog for: {', '.join(refs)}")
 
     if args.catalog_url is not None:
-        return get_custom_vulnerabilities(conan_api, refs, args.token, args.catalog_url, console)
+        return get_custom_vulnerabilities(conan_api, refs, args.token, args.catalog_url)
     else:
-        return get_proxy_vulnerabilities(conan_api, refs, args.token, console)
-
-
-def _print_preface(refs):
-    # this would be the idea to support both rich and normal output, but it can get super cumbersome
-    try:
-        from rich.console import Console
-        from rich.table import Table
-        from rich.progress import Progress
-        from rich.text import Text
-        from rich.panel import Panel
-
-        console = Console(stderr=True)
-
-        panel = Panel("Calculating Conan graph", style="bold green", expand=False)
-        console.print(panel)
-
-        console.print(f"Found {len(refs)} packages in the Conan graph: {refs}")
-
-        panel = Panel("Requesting vulnerability information to JFrog Catalog", style="bold green", expand=False)
-
-        console.print("\n")
-        console.print(panel)
-        console.print("\n")
-
-        return console
-    except ImportError:
-        out = ConanOutput()
-        out.info(f"Found {len(refs)} packages in the Conan graph: {refs}")
-        out.info("Requesting vulnerability information to JFrog Catalog")
-        return None
+        return get_proxy_vulnerabilities(conan_api, refs, args.token)
